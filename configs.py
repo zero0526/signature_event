@@ -10,16 +10,18 @@ def get_env_file() -> str:
     return "dev.env"
 
 class BaseConfig(BaseSettings):
-    _NOUN_POS: Set= Field(default= {"N", "Np", "Nc", "Nu", "Ny", "Nb"})
-    _VERB_POS: Set= {"V", "Vb"}
-    _ADV_POS: Set= {"R"} # Phó từ (đã, đang, sẽ, cố_tình...)
-    _ADJ_POS: Set= {"A"} # Tính từ (ẩu, nhanh, mạnh...)
-    _PREP_POS: Set= {"E"} # Giới từ (vào, ra, khỏi, xuống...)
-    _CONNECTOR_POS: Set= {"L", "E", "CH"}  
-    _COORD_DEP: Set= {"coord", "conj"} 
-    
+    NOUN_POS: Set= Field(default= {"N", "Np", "Nc", "Nu", "Ny", "Nb"})
+    VERB_POS: Set= {"V", "Vb"}
+    ADV_POS: Set= {"R"} # Phó từ (đã, đang, sẽ, cố_tình...)
+    ADJ_POS: Set= {"A"} # Tính từ (ẩu, nhanh, mạnh...)
+    PREP_POS: Set= {"E"} # Giới từ (vào, ra, khỏi, xuống...)
+    CONNECTOR_POS: Set= {"L", "E", "CH"}  
+    COORD_DEP: Set= {"coord", "conj"} 
     class Config:
         env_file = get_env_file()
         env_file_encoding = "utf-8"
+        
+        
+configs= BaseConfig()
 
 

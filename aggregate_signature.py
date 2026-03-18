@@ -1,12 +1,22 @@
 # aggregate_signature.py
 from collections import Counter
-from typing import List, Dict
+from typing import List, Dict, Any
+from extract_ner import ExtractNER
+from extract_event 
 
 class EventSignatureAggregator:
-    def __init__(self, min_support: float = 0.3):
-        # min_support = 0.3 nghĩa là từ khóa phải xuất hiện ở ít nhất 30% số bài báo
-        self.min_support = min_support
-
+    def __init__(self, model):
+        self.model= model
+        self.extract_ner= ExtractNER()
+        self.extract_action= 
+    def annotate(self, text: str):
+        return self.model.annotate_text(text)
+    
+    def process(self, text: str):
+        annotated_text: Dict[int, List[Dict[str, Any]]]= self.annotate(text)
+        for _, token in annotated_text.items():
+            
+            
     def generate_signature(self, list_of_article_features: List[Dict[str, List[str]]]):
         total_docs = len(list_of_article_features)
         

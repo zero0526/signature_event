@@ -62,9 +62,9 @@ class EntityExtractor:
         # sort by first index
         entities = sorted(entities, key=lambda e: e["token_indices"][0])
 
-        # optional: expand entity by dependency: include adjacent nouns whose head points into entity
+        # optional: expand entity by adjacency (POS)
         if self.expand_by_dep:
-            entities = self._expand_by_dependency(entities, index_map)
+            entities = self._expand_by_pos(entities, index_map)
 
         # optional: merge adjacent same-label with very small gap
         if self.merge_adjacent_same_label:
@@ -74,18 +74,15 @@ class EntityExtractor:
         if self.merge_if_gap_connectors:
             entities = self._merge_across_connectors(entities, index_map, tokens)
 
-        # reassign heads/depLabels/tokens properly (sanity)
+        # reassign tokens properly
         for e in entities:
             e["token_indices"] = sorted(set(e["token_indices"]))
-            e["heads"] = [index_map[i].get("head") for i in e["token_indices"]]
-            e["depLabels"] = [index_map[i].get("depLabel") for i in e["token_indices"]]
             e["tokens"] = [index_map[i] for i in e["token_indices"]]
 
         return entities
 
-    def _expand_by_dependency(self, entities: List[Dict[str, Any]],
-                              index_map: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
-        DEP_INCLUSION = {"nmod", "pob", "amod", "nsub", "prd", "nmod"}  
+    def _expand_by_pos(self, entities: List[Dict[str, Any]],
+                       index_map: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
         entities_out = []
         all_entity_tokens = set()
         for e in entities:
@@ -94,19 +91,17 @@ class EntityExtractor:
         for e in entities:
             e_indices = list(e["token_indices"])
             max_idx = max(e_indices)
-            for delta in range(1, 4):
+            for delta in range(1, 4): # expand right up to 3 tokens
                 cand_idx = max_idx + delta
                 cand = index_map.get(cand_idx)
                 if not cand:
                     break
                 if cand_idx in all_entity_tokens:
                     break
-                pos = cand.get("posTag")
-                dep = cand.get("depLabel", "")
-                head = cand.get("head")
-                if (pos in configs.NOUN_POS and (head in e_indices or dep in DEP_INCLUSION)):
+                pos = cand.get("posTag", "")
+                if pos in configs.NOUN_POS:
                     if self.debug:
-                        print(f"expand: entity {e['label']} add token {cand['wordForm']} idx {cand_idx} because head {head} dep {dep} pos {pos}")
+                        print(f"expand: entity {e['label']} add token {cand['wordForm']} idx {cand_idx} pos {pos}")
                     e_indices.append(cand_idx)
                     all_entity_tokens.add(cand_idx)
                     max_idx = cand_idx

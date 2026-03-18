@@ -172,22 +172,28 @@ class KeywordGraph:
                 actions_by_sent[sid].add(resolved_action)
 
         # ===== 1. BUILD NODE LIST (QUAN TRỌNG NHẤT) =====
-        nodes = set()
-
-        # entities
+        entities_nodes = set()
         for ents in entities_by_sent.values():
-            nodes.update(ents)
+            entities_nodes.update(ents)
 
-        # actions
+        actions_nodes = set()
         for acts in actions_by_sent.values():
-            nodes.update(acts)
+            actions_nodes.update(acts)
 
-        # quantities
+        quantities_nodes = set()
         for qs in quantities_by_sent.values():
-            nodes.update(qs)
+            quantities_nodes.update(qs)
 
-        nodes = list(nodes)
+        nodes = list(entities_nodes | actions_nodes | quantities_nodes)
         node_index = {n: i for i, n in enumerate(nodes)}
+        
+        node_types = []
+        for n in nodes:
+            t_list = []
+            if n in entities_nodes: t_list.append("entity")
+            if n in actions_nodes: t_list.append("action")
+            if n in quantities_nodes: t_list.append("quantity")
+            node_types.append(t_list)
 
         # ===== 2. BUILD EDGE =====
         edge_weights = defaultdict(float)
@@ -228,6 +234,7 @@ class KeywordGraph:
         g = Graph()
         g.add_vertices(len(nodes))
         g.vs["name"] = nodes
+        g.vs["node_type"] = node_types
 
         if edge_weights:
             edges = [(node_index[a], node_index[b]) for a, b in edge_weights]
@@ -257,16 +264,22 @@ class KeywordGraph:
         }
 
     # ========= MULTI-DOCUMENT MERGING =========
-    def resolve_nodes(self, nodes):
-        """Gom nhóm các node (từ nhiều graph) nếu chúng giống/bao trùm nhau."""
+    def resolve_nodes(self, nodes, node_types_map):
+        """Gom nhóm các node (từ nhiều graph) nếu chúng giống/bao trùm nhau VÀ có chung type."""
         groups = []
         for text in nodes:
             matched = False
+            my_types = set(node_types_map[text])
+            
             for g in groups:
-                if self.is_similar(text, g["rep"]):
-                    g["items"].append(text)
-                    matched = True
-                    break
+                rep_types = set(node_types_map[g["rep"]])
+                # Chỉ cho phép merge nếu hai node có chung ít nhất 1 type
+                if my_types.intersection(rep_types):
+                    if self.is_similar(text, g["rep"]):
+                        g["items"].append(text)
+                        matched = True
+                        break
+                        
             if not matched:
                 groups.append({"rep": text, "items": [text]})
         
@@ -282,19 +295,23 @@ class KeywordGraph:
         """Merge danh sách các Graph lại với nhau dựa trên sự bao trùm của keyword."""
         all_nodes = set()
         raw_edges = []
+        node_types_map = defaultdict(set)
         
         # 1. Thu thập toàn bộ node và edge từ các graph
         for g in graphs:
             names = g.vs["name"]
+            types = g.vs["node_type"]
             all_nodes.update(names)
             for edge in g.es:
                 u_name = names[edge.source]
                 v_name = names[edge.target]
                 weight = edge["weight"]
                 raw_edges.append((u_name, v_name, weight))
+            for n, t_list in zip(names, types):
+                node_types_map[n].update(t_list)
                 
         # 2. Gom cụm các node giống nhau
-        node_map = self.resolve_nodes(list(all_nodes))
+        node_map = self.resolve_nodes(list(all_nodes), node_types_map)
         
         # 3. Tính toán lại Nodes và Edges
         merged_nodes = list(set(node_map.values()))
@@ -309,10 +326,19 @@ class KeywordGraph:
             key = tuple(sorted([cu, cv]))
             edge_weights[key] += w  # Cộng dồn weight
             
+        merged_types = []
+        for n in merged_nodes:
+            t_set = set()
+            for u, cu in node_map.items():
+                if cu == n:
+                    t_set.update(node_types_map[u])
+            merged_types.append(list(t_set))
+
         # 4. Khởi tạo merged graph
         merged_g = Graph()
         merged_g.add_vertices(len(merged_nodes))
         merged_g.vs["name"] = merged_nodes
+        merged_g.vs["node_type"] = merged_types
         
         if edge_weights:
             edges = [(node_index[a], node_index[b]) for a, b in edge_weights]
@@ -332,17 +358,35 @@ class KeywordGraph:
         return merged_g
 
     # ========= MAIN =========
+    def _split_ranked(self, graph, scores):
+        ranked_entities = []
+        ranked_actions = []
+        ranked_quantities = []
+        for i, v in enumerate(graph.vs):
+            name = v["name"]
+            score = scores.get(name, 0)
+            t_list = v["node_type"]
+            if "entity" in t_list:
+                ranked_entities.append((name, score))
+            if "action" in t_list:
+                ranked_actions.append((name, score))
+            if "quantity" in t_list:
+                ranked_quantities.append((name, score))
+
+        return {
+            "ranked_entities": sorted(ranked_entities, key=lambda x: x[1], reverse=True),
+            "ranked_actions": sorted(ranked_actions, key=lambda x: x[1], reverse=True),
+            "ranked_quantities": sorted(ranked_quantities, key=lambda x: x[1], reverse=True),
+        }
+
     def run(self, data):
         g, entities = self.build_graph(data)
         scores = self.textrank(g)
 
-        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-
-        return {
-            "entities": entities,
-            "ranked_keywords": ranked,
-            "graph": g
-        }
+        result = self._split_ranked(g, scores)
+        result["entities"] = entities
+        result["graph"] = g
+        return result
 
     def run_multiple(self, data_list):
         """Chạy tổng hợp trên nhiều bài viết (list các data map)."""
@@ -356,9 +400,7 @@ class KeywordGraph:
         
         # Chạy TextRank một lần cuối trên graph tổng
         scores = self.textrank(merged_g)
-        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-
-        return {
-            "ranked_keywords": ranked,
-            "graph": merged_g
-        }
+        
+        result = self._split_ranked(merged_g, scores)
+        result["graph"] = merged_g
+        return result

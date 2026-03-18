@@ -23,8 +23,8 @@ class EventExtractor:
 
                 action_text = render_text(vp_indices, index_map, self.keep_underscores)
 
-                subject = self._find_dependent_phrase(idx, index_map, tokens, dep_types=["sub", "nsubj", "csubj"])
-                object_ = self._find_dependent_phrase(idx, index_map, tokens, dep_types=["dob", "pob", "obj", "dobj"])
+                subject = self._find_dependent_phrase(idx, index_map, tokens, is_subject=True)
+                object_ = self._find_dependent_phrase(idx, index_map, tokens, is_subject=False)
 
                 if subject or object_ or len(vp_indices) > 1:
                     events.append({
@@ -38,72 +38,72 @@ class EventExtractor:
     def _expand_verb_phrase(self, head_idx, tokens, index_map):
         vp = set([head_idx])
 
-        # ===== 1. expand qua dependency (chuẩn nhất) =====
-        for t in tokens:
-            if t.get("head") == head_idx:
-                dep = t.get("depLabel", "").lower()
-                pos = t.get("posTag", "")
-
-                # giữ các modifier quan trọng
-                if any(x in dep for x in ["aux", "adv", "neg", "amod", "compound"]):
-                    vp.add(t["index"])
-
-        # ===== 2. expand trái (rất hạn chế) =====
-        for i in range(head_idx - 1, max(0, head_idx - 3), -1):
+        # ===== 1. expand trái =====
+        for i in range(head_idx - 1, max(-1, head_idx - 3), -1):
             if i not in index_map:
                 break
-
             t = index_map[i]
             word = t["wordForm"].lower()
+            pos = t.get("posTag", "")
 
-            # whitelist cụ thể
-            if word in ["đã", "đang", "sẽ", "không", "chưa"]:
+            # whitelist cụ thể hoặc adverb
+            if word in ["đã", "đang", "sẽ", "không", "chưa", "hãy", "đừng", "chớ", "bị", "được", "có_thể"] or pos == "R":
                 vp.add(i)
             else:
                 break
 
-        # ===== 3. expand phải (cực kỳ chặt) =====
+        # ===== 2. expand phải =====
         for i in range(head_idx + 1, head_idx + 3):
             if i not in index_map:
                 break
-
             t = index_map[i]
             pos = t.get("posTag", "")
-            dep = t.get("depLabel", "").lower()
 
-            # chỉ giữ nếu là verb phụ thuộc
-            if pos in configs.VERB_POS and "compound" in dep:
+            # chỉ giữ nếu là verb theo ngay sau hoặc trạng từ
+            if pos in configs.VERB_POS or pos == "R":
                 vp.add(i)
             else:
                 break
 
         return sorted(vp)
 
-    def _find_dependent_phrase(self, head_verb_idx: int, index_map: Dict[int, Dict], tokens: List[Dict], dep_types: List[str]) -> str:
+    def _find_dependent_phrase(self, head_verb_idx: int, index_map: Dict[int, Dict], tokens: List[Dict], is_subject: bool) -> str:
         target_idx = None
-        for t in tokens:
-            if t.get("head") == head_verb_idx and any(d in t.get("depLabel", "").lower() for d in dep_types):
-                target_idx = t["index"]
-                break
+        
+        if is_subject:
+            # Look left for subject
+            for i in range(head_verb_idx - 1, max(-1, head_verb_idx - 5), -1):
+                if i in index_map and index_map[i].get("posTag") in configs.NOUN_POS:
+                    target_idx = i
+                    break
+        else:
+            # Look right for object
+            for i in range(head_verb_idx + 1, min(len(tokens), head_verb_idx + 5)):
+                if i in index_map and index_map[i].get("posTag") in configs.NOUN_POS:
+                    target_idx = i
+                    break
 
-        if not target_idx:
-            if "sub" in dep_types[0]:
-                for i in range(head_verb_idx - 1, max(0, head_verb_idx - 5), -1):
-                    if i in index_map and index_map[i].get("posTag") in configs.NOUN_POS:
-                        target_idx = i
-                        break
-            else:
-                for i in range(head_verb_idx + 1, min(len(tokens)+1, head_verb_idx + 5)):
-                    if i in index_map and index_map[i].get("posTag") in configs.NOUN_POS:
-                        target_idx = i
-                        break
-
-        if target_idx:
+        if target_idx is not None:
             np_indices = [target_idx]
-            for t in tokens:
-                if t.get("head") == target_idx and t["index"] != target_idx:
-                    if t.get("posTag") != "CH":
-                        np_indices.append(t["index"])
+            
+            # expand left
+            for i in range(target_idx - 1, max(-1, target_idx - 3), -1):
+                if i in index_map and index_map[i].get("posTag") in configs.NOUN_POS:
+                    np_indices.append(i)
+                else:
+                    break
+            # expand right
+            for i in range(target_idx + 1, min(len(tokens), target_idx + 4)):
+                t_pos = index_map[i].get("posTag") if i in index_map else ""
+                if type(configs.NOUN_POS) == list: 
+                    target_pos_list = configs.NOUN_POS + ["A", "M"]
+                else:
+                    target_pos_list = list(configs.NOUN_POS) + ["A", "M"]
+
+                if t_pos in target_pos_list:
+                    np_indices.append(i)
+                else:
+                    break
 
             np_indices = sorted(list(set(np_indices)))
             return render_text(np_indices, index_map, self.keep_underscores)
